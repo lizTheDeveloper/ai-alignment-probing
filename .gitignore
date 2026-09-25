@@ -1,0 +1,24 @@
+# Environment
+.venv/
+__pycache__/
+.ipynb_checkpoints/
+
+# Local-only agent notes (instance IDs, SSH, tokens)
+CLAUDE.local.md
+
+# Third-party hate-speech corpora and files derived from them: rebuild with data/fetch_sources.sh
+data/toxigen/*.parquet
+data/stormfront/hate-speech-dataset-master/
+data/probe_prompts/toxigen_*.jsonl
+data/probe_prompts/stormfront_*.jsonl
+data/probe_prompts/all_concepts.jsonl
+
+# Large generated artifacts
+*.npy
+diag_features.npz
+diag_results.csv
+*.png
+
+# Scratch
+*.bak
+Untitled*.ipynb

@@ -2,6 +2,8 @@
 import json
 import sys
 
+from nb_tracing import FLUSH_CELL, tracing_cell
+
 cells = []
 
 
@@ -75,6 +77,8 @@ df["origin"] = np.where(df["format"].isin(["toxigen", "forum_post"]), "real", "s
 print(f"{len(df)} texts\\n")
 print(df.groupby(["concept", "origin", "label"]).size().unstack().fillna(0).astype(int))
 """)
+
+code(tracing_cell("02_probe_every_concept"))
 
 md("""
 ### What the labels mean
@@ -152,7 +156,10 @@ if FEATURES.exists():
     H = np.load(FEATURES)
     print("Loaded cached hidden states.")
 else:
-    H = extract_all_layers(df.text.tolist())
+    with trace("extract-hidden-states", input={"n_texts": len(df), "layers": N_LAYERS + 1},
+               metadata={"model": MODEL_NAME, "pooling": "mean"}) as obs:
+        H = extract_all_layers(df.text.tolist())
+        obs.update(output={"shape": list(H.shape)})
     np.save(FEATURES, H)
 print(f"\\nHidden states: {H.shape}  (texts, layers, dims)")
 """)
@@ -201,6 +208,10 @@ for concept in CONCEPTS:
         layer_auc[concept].append(roc_auc_score(y_all[s["val"]], scores))
     best = int(np.argmax(layer_auc[concept]))
     print(f"{concept:16s} best layer {best:2d}  (val AUC {layer_auc[concept][best]:.3f})")
+
+with trace("layer-sweep", input={"concepts": CONCEPTS}, metadata={"model": MODEL_NAME}) as obs:
+    obs.update(output={c: {"best_layer": int(np.argmax(v)), "val_auc_by_layer": [round(a, 4) for a in v]}
+                       for c, v in layer_auc.items()})
 """)
 
 md("""
@@ -257,6 +268,10 @@ for concept in CONCEPTS:
                  "n test": len(s["test"])})
 
 results = pd.DataFrame(rows).set_index("concept")
+with trace("final-probes", input={"concepts": CONCEPTS}, metadata={"model": MODEL_NAME}) as obs:
+    obs.update(output=results.reset_index().to_dict("records"))
+    for concept, r in results.iterrows():
+        obs.score(name=f"test_auc_{concept}", value=float(r["test AUC"]))
 results.style.format({"test AUC": "{:.3f}", "test accuracy": "{:.1%}"})
 """)
 
@@ -359,6 +374,8 @@ for train_origin, test_origin in [("synthetic", "real"), ("real", "synthetic")]:
     p = make_probe().fit(H[tr, layer].astype(np.float32), y_all[tr])
     auc = roc_auc_score(y_all[te], p.predict_proba(H[te, layer].astype(np.float32))[:, 1])
     transfer.append({"train on": train_origin, "test on": test_origin, "AUC": auc})
+with trace("sexism-transfer", metadata={"layer": layer}) as obs:
+    obs.update(output=transfer)
 pd.DataFrame(transfer).style.format({"AUC": "{:.3f}"})
 """)
 
@@ -371,9 +388,12 @@ Score any text with all five probes. Try subtle cases: a historical quote, a jok
 
 code("""
 def score_text(text):
-    h = extract_all_layers([text])[0]
-    return {c: float(final[c]["probe"].predict_proba(h[final[c]["layer"]].astype(np.float32)[None])[0, 1])
-            for c in CONCEPTS}
+    with trace("score-text", input=text, metadata={"model": MODEL_NAME}) as obs:
+        h = extract_all_layers([text])[0]
+        scores = {c: float(final[c]["probe"].predict_proba(h[final[c]["layer"]].astype(np.float32)[None])[0, 1])
+                  for c in CONCEPTS}
+        obs.update(output=scores)
+    return scores
 
 examples = [
     "The river valley was always ours; it's time our borders reflected that.",
@@ -446,6 +466,8 @@ that might have learned to hide what it's thinking.
 *Data sources:* ToxiGen (Hartvigsen et al., 2022). Stormfront hate speech corpus (de Gibert et al., 2018),
 CC BY-SA 3.0 ES — derived data must carry the same license.
 """)
+
+code(FLUSH_CELL)
 
 nb = {"cells": cells,
       "metadata": {"kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},

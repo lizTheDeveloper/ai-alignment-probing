@@ -13,7 +13,8 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-LAYERS = list(range(8, 25))
+LAYERS = list(range(8, 25))          # layers stored in the feature cache
+SWEEP = [LAYERS.index(L) for L in (12, 16, 20)]  # layers actually compared (keeps CPU time down)
 CONCEPTS = ["expansionism", "colonialism", "sexism", "racism", "white_supremacy"]
 
 df = pd.DataFrame([json.loads(l) for l in Path("data/probe_prompts/all_concepts.jsonl").read_text().splitlines()])
@@ -73,7 +74,7 @@ def train_set(c, which, ovr):
 rows = []
 for pool in ["mean", "last"]:
     for ovr in [False, True]:
-        for C in [0.01, 0.05, 0.5]:
+        for C in [0.05, 0.5]:
             X, XH = F[pool], FH[pool]
             hard_scores = {}
             res = {"pooling": pool, "one_vs_rest": ovr, "C": C}
@@ -81,7 +82,7 @@ for pool in ["mean", "last"]:
                 tr, ytr = train_set(c, 0, ovr)
                 va = splits[c][1]
                 best, best_auc = None, -1
-                for j in range(len(LAYERS)):
+                for j in SWEEP:
                     p = make_pipeline(StandardScaler(), LogisticRegression(C=C, max_iter=2000)).fit(X[tr, j].astype(np.float32), ytr)
                     a = roc_auc_score(y[va], p.predict_proba(X[va, j].astype(np.float32))[:, 1])
                     if a > best_auc:

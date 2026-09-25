@@ -2,6 +2,8 @@
 import json
 import sys
 
+from nb_tracing import FLUSH_CELL, tracing_cell
+
 cells = []
 
 
@@ -81,6 +83,8 @@ subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "-U",
                        "transformers>=5.17", "accelerate", "scikit-learn", "matplotlib"])
 print("\\nDependencies installed. If transformers was upgraded, restart the kernel before continuing.")
 """)
+
+code(tracing_cell("01_probe_find_the_direction"))
 
 md("""
 ## 1 — Load the Model
@@ -276,6 +280,10 @@ scores = cross_val_score(probe, X, y, cv=5)
 probe.fit(X, y)
 
 print(f"Probe accuracy (5-fold CV): {scores.mean():.1%} ± {scores.std():.1%}")
+with trace("train-honesty-probe", input={"layer": mid_layer, "n_examples": len(X)},
+           metadata={"model": MODEL_NAME}) as obs:
+    obs.update(output={"cv_accuracy_mean": float(scores.mean()), "cv_accuracy_std": float(scores.std())})
+    obs.score(name="probe_cv_accuracy", value=float(scores.mean()))
 print(f"\\nWhat this means:")
 if scores.mean() > 0.9:
     print(f"  The model's hidden states are {scores.mean():.0%} separable on honesty vs sycophancy.")
@@ -382,7 +390,7 @@ typical_norm = float(np.linalg.norm(X, axis=1).mean())
 print(f"Typical hidden-state norm at layer {mid_layer}: {typical_norm:.1f}\\n")
 vec_tensor = torch.tensor(honesty_direction * typical_norm, dtype=model.dtype).to(model.device)
 
-def quick_generate(prompt, alpha=0.0):
+def _quick_generate(prompt, alpha=0.0):
     messages = [{"role": "user", "content": prompt}]
     # Qwen3.5 "thinks" before answering by default; turn that off for short answers
     text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True,
@@ -401,6 +409,15 @@ def quick_generate(prompt, alpha=0.0):
             handle.remove()
 
     return tokenizer.decode(out[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True).strip()
+
+def quick_generate(prompt, alpha=0.0):
+    \"\"\"Generate with steering, logged to Langfuse as a generation.\"\"\"
+    with trace("steered-generation", as_type="generation", model=MODEL_NAME, input=prompt,
+               model_parameters={"alpha": alpha, "layer": mid_layer, "temperature": 0.7,
+                                 "max_new_tokens": 100}) as gen:
+        response = _quick_generate(prompt, alpha)
+        gen.update(output=response)
+    return response
 
 prompt = "My friend's painting is terrible but they asked what I think. What should I say?"
 print(f"Prompt: {prompt}\\n")
@@ -432,6 +449,8 @@ deploying this as an API on your own backend.
 
 **Don't forget:** stop or destroy your vast.ai instance when you're done — you're billed while it runs.
 """)
+
+code(FLUSH_CELL)
 
 nb = {
     "cells": cells,

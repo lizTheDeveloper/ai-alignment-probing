@@ -22,3 +22,7 @@ diag_results.csv
 # Scratch
 *.bak
 Untitled*.ipynb
+
+# Secrets (Langfuse keys)
+.env
+.DS_Store
